@@ -12,6 +12,7 @@ enum Target: Hashable {
 enum Page: String, CaseIterable {
     case light = "Light"
     case music = "Music"
+    case spotify = "Spotify"
 }
 
 /// The app's state on the main actor. Bluetooth and music run elsewhere and report back here.
@@ -23,8 +24,12 @@ final class AppModel {
     private(set) var bluetooth = BluetoothStatus.unknown
     private(set) var scanned: [ScannedStrip] = []
     var scanning = false { didSet { scanning ? controller.startScan() : controller.stopScan() } }
-    var target = Target.all
+    var target = Target.all { didSet { if oldValue != target { stopSpotify() } } }
     var page = Page.light
+
+    let spotify = SpotifyMode()
+    private(set) var calibratingColor: UUID?
+    private var calibrationTestColor = Rgb.white
 
     private(set) var musicRunning = false
     private(set) var musicError: String?
@@ -37,22 +42,22 @@ final class AppModel {
 
     init() {
         controller = LedController(
-            onStates: { states in Task { @MainActor [weak self] in self?.connection = states } },
+            onStates: { [weak self] states in Task { @MainActor [weak self] in self?.connectionsChanged(states) } },
             onScan: { found in Task { @MainActor [weak self] in self?.scanned = found } },
             onStatus: { status in Task { @MainActor [weak self] in self?.bluetooth = status } }
         )
         controller.setDevices(data.devices)
         let environment = ProcessInfo.processInfo.environment
         if let page = environment["FFF3_PAGE"].flatMap({ Page(rawValue: $0.capitalized) }) { self.page = page }
-        // Test switches: a style for this run only, and music started once every strip is connected.
+        // Test switches: a style for this run only, and music (or album colours) started once every strip is connected.
         if let style = environment["FFF3_STYLE"].flatMap(MusicStyle.init(rawValue:)) { data.settings.musicStyle = style }
-        if environment["FFF3_AUTOSTART"] != nil {
+        if let autostart = environment["FFF3_AUTOSTART"] {
             Task { [weak self] in
                 for _ in 0..<60 {
                     try? await Task.sleep(for: .milliseconds(500))
                     guard let self else { return }
                     if !self.devices.isEmpty, self.devices.allSatisfy({ self.connection[$0.id] == .connected }) {
-                        await self.startMusic()
+                        if autostart == "album" { self.startSpotify() } else { await self.startMusic() }
                         return
                     }
                 }
@@ -93,12 +98,15 @@ final class AppModel {
 
     /// The colour the window takes its accent from: the target's last colour, or fff3 violet.
     var accent: Rgb {
+        if spotify.running, let color = spotify.color { return color }
         if musicRunning { return live.color }
         return targetState.color ?? data.devices.compactMap { data.states[$0.id.uuidString]?.color }.first ?? Rgb(0x8A7CFF)
     }
 
 
     func send(_ commands: [Command]) {
+        endColorCalibration()
+        stopSpotify()
         let ids = targetIds
         controller.send(ids, commands)
         for id in ids {
@@ -124,6 +132,8 @@ final class AppModel {
     }
 
     func forget(_ id: UUID) {
+        endColorCalibration()
+        stopSpotify()
         data.devices.removeAll { $0.id == id }
         data.states[id.uuidString] = nil
         if target == .device(id) { target = .all }
@@ -137,6 +147,30 @@ final class AppModel {
         scheduleSave()
     }
 
+    var settingsBackup: SettingsBackup { SettingsBackup(data) }
+
+    func importSettings(_ backup: SettingsBackup) throws {
+        let validated = try SettingsBackup.read(backup.encoded())
+        let folder = Store.url.deletingLastPathComponent().appending(path: "backups", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try settingsBackup.encoded().write(to: folder.appending(path: "fff3-before-import-\(UUID().uuidString).json"), options: .atomic)
+        endColorCalibration()
+        stopSpotify()
+        stopMusic()
+        let updated = validated.merged(into: data)
+        guard Store.save(updated) else { throw BackupError("Could not save imported settings. Your existing settings are kept.") }
+        data = updated
+        controller.setDevices(data.devices)
+    }
+
+    private func connectionsChanged(_ states: [UUID: ConnectionState]) {
+        let newlyConnected = musicTargets.filter { states[$0] == .connected && connection[$0] != .connected }
+        connection = states
+        if spotify.running, let color = spotify.color, !newlyConnected.isEmpty {
+            controller.send(newlyConnected, [.power(true), .color(color)])
+        }
+    }
+
     func retry() { controller.retryNow() }
 
 
@@ -148,18 +182,19 @@ final class AppModel {
     }
 
     func startMusic() async {
-        guard !musicRunning, !targetIds.isEmpty else { return }
+        guard calibratingColor == nil, !musicRunning, !targetIds.isEmpty else { return }
+        stopSpotify()
         musicError = nil
         let source: AudioSource
         if let file = ProcessInfo.processInfo.environment["FFF3_AUDIO_FILE"] {
             source = FileSource(path: file)
         } else if data.settings.musicSource == .microphone {
             guard await AVCaptureDevice.requestAccess(for: .audio) else {
-                musicError = "fff3 cannot use the microphone. Allow it in System Settings, Privacy and Security, Microphone."
+                musicError = "[rgb] cannot use the microphone. Allow it in System Settings, Privacy and Security, Microphone."
                 return
             }
-            // A second click during the permission request must not start a second engine.
-            guard !musicRunning, !targetIds.isEmpty else { return }
+            // A permission request must not start a competing light mode.
+            guard calibratingColor == nil, !musicRunning, !spotify.running, !targetIds.isEmpty else { return }
             source = MicrophoneSource()
         } else {
             source = SystemAudioSource()
@@ -219,7 +254,78 @@ final class AppModel {
         scheduleSave()
     }
 
+    func startSpotify() {
+        guard calibratingColor == nil, spotify.canStart, !spotify.running, !targetIds.isEmpty else { return }
+        stopMusic()
+        musicTargets = targetIds
+        controller.send(musicTargets, [.power(true)])
+        spotify.start(onColor: { [weak self] color in
+            guard let self else { return }
+            self.controller.send(self.musicTargets, [.color(color)])
+        }, onFailure: { [weak self] in self?.stopSpotify() })
+    }
+
+    func stopSpotify() {
+        guard spotify.running else { return }
+        spotify.stop()
+        restoreAfterMusic()
+    }
+
+    func beginColorCalibration(_ id: UUID) {
+        guard devices.contains(where: { $0.id == id }) else { return }
+        endColorCalibration()
+        stopSpotify()
+        stopMusic()
+        calibratingColor = id
+        calibrationTestColor = .white
+        controller.send([id], [.power(true), .color(calibrationTestColor)])
+    }
+
+    func previewCalibrationColor(_ color: Rgb) {
+        guard let id = calibratingColor else { return }
+        calibrationTestColor = color
+        controller.send([id], [.color(color)])
+    }
+
+    func previewColorCalibration(_ id: UUID, _ calibration: ColorCalibration) {
+        guard calibratingColor == id else { return }
+        controller.previewColorCalibration(id, calibration)
+        controller.send([id], [.color(calibrationTestColor)])
+    }
+
+    func updateColorCalibration(_ id: UUID, _ calibration: ColorCalibration) -> Bool {
+        guard let index = data.devices.firstIndex(where: { $0.id == id }) else { return false }
+        let previous = data.devices[index].colorCalibration
+        data.devices[index].colorCalibration = calibration == ColorCalibration() ? nil : calibration
+        guard Store.save(data) else {
+            data.devices[index].colorCalibration = previous
+            return false
+        }
+        controller.setDevices(data.devices)
+        if calibratingColor == id { controller.send([id], [.color(calibrationTestColor)]) }
+        return true
+    }
+
+    func endColorCalibration() {
+        guard let id = calibratingColor else { return }
+        calibratingColor = nil
+        guard let device = devices.first(where: { $0.id == id }) else { return }
+        controller.previewColorCalibration(id, device.colorCalibration ?? ColorCalibration())
+        let state = data.states[id.uuidString]
+        var commands: [Command] = []
+        if let effect = state?.effectId { commands.append(.effect(id: effect, speed: state?.speed)) }
+        else if let scene = state?.sceneId { commands.append(.scene(scene)) }
+        else if let color = state?.color { commands.append(.color(color)) }
+        if state?.power == false { commands.append(.power(false)) }
+        else if state?.power == nil { data.states[id.uuidString, default: LedState()].power = true }
+        controller.send([id], commands)
+        scheduleSave()
+    }
+
     func shutdown() {
+        endColorCalibration()
+        stopSpotify()
+        spotify.cancelSignIn()
         stopMusic()
         save()
         controller.closeAll()

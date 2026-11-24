@@ -23,6 +23,15 @@ public struct Rgb: Hashable, Sendable, Codable, CustomStringConvertible {
         Rgb((red.clamped(0, 255) << 16) | (green.clamped(0, 255) << 8) | blue.clamped(0, 255))
     }
 
+    /// Blends the three LED channels toward another colour. Used for visible, steady colour fades.
+    public func blended(toward target: Rgb, progress: Double) -> Rgb {
+        let t = progress.clamped(0, 1)
+        func channel(_ start: Int, _ end: Int) -> Int {
+            Int((Double(start) + Double(end - start) * t).rounded())
+        }
+        return .of(channel(red, target.red), channel(green, target.green), channel(blue, target.blue))
+    }
+
     /// `hue` in degrees (any value, wrapped), `saturation` and `value` in 0...1.
     public static func fromHsv(_ hue: Float, saturation: Float = 1, value: Float = 1) -> Rgb {
         let h = (hue.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360) / 60

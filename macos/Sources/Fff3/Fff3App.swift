@@ -7,7 +7,7 @@ struct Fff3App: App {
     @State private var model = AppModel()
 
     var body: some Scene {
-        Window("fff3", id: "main") {
+        Window("[rgb]", id: "main") {
             ContentView(model: model)
                 .frame(minWidth: 640, minHeight: 520)
                 .onAppear { delegate.model = model }

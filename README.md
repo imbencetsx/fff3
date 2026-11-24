@@ -1,6 +1,6 @@
 # fff3
 
-fff3 controls Bluetooth LED strips with ELK-BLEDOM and MELK controllers, from an Android phone or a Mac. It changes colour live while you drag, and makes the strips follow the music, on the beat. It has no ads, no tracking and no internet access.
+fff3 controls Bluetooth LED strips with ELK-BLEDOM and MELK controllers, from an Android phone or a Mac. It changes colour live while you drag, and makes the strips follow the music, on the beat. It has no ads or tracking. Android works without internet access; the Mac app uses the internet only for its optional Spotify mode.
 
 It is for personal use and is not on Google Play or the Mac App Store.
 
@@ -18,7 +18,7 @@ The usual store app for these strips is large, slow and full of ads. It sends a 
 | | Usual store app | fff3 |
 |---|---|---|
 | Size | 9.4 MB | about 3 MB on Android |
-| Ads and analytics | yes | none, no internet access |
+| Ads and analytics | yes | none |
 | Commands | 1 every 2 seconds, after a "Set" tap | up to 28 a second, live |
 | Connection | scan and connect for each command | added once, kept open |
 
@@ -37,6 +37,7 @@ Beat lock finds the tempo and keeps the lights on the beat, even in quiet parts 
 
 | | Android | Mac |
 |---|---|---|
+| Spotify album-cover colours | no | yes, with your own Spotify Client ID |
 | Groups and favourites | yes | one strip or all strips |
 | Timers, wire order, the strip's microphone modes | yes | not yet |
 | Tile, widget and shortcuts | yes | no |

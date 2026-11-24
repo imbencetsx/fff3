@@ -8,6 +8,7 @@ struct KnownDevice: Codable, Hashable, Identifiable, Sendable {
     let advertisedName: String
     let family: LedFamily
     var label: String?
+    var colorCalibration: ColorCalibration?
 
     var displayName: String {
         if let label, !label.trimmingCharacters(in: .whitespaces).isEmpty { return label }
@@ -88,14 +89,17 @@ enum Store {
         return (try? JSONDecoder().decode(AppData.self, from: data)) ?? AppData()
     }
 
-    static func save(_ app: AppData) {
+    @discardableResult
+    static func save(_ app: AppData) -> Bool {
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(app).write(to: url, options: .atomic)
+            return true
         } catch {
             NSLog("fff3: cannot save %@: %@", url.path, error.localizedDescription)
+            return false
         }
     }
 }

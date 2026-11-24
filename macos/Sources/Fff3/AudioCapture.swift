@@ -175,7 +175,7 @@ final class SystemAudioSource: AudioSource, @unchecked Sendable {
 
         let outputUID = try OutputDevice.defaultUID()
         let aggregate: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "fff3 system audio",
+            kAudioAggregateDeviceNameKey: "[rgb] system audio",
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
             kAudioAggregateDeviceMainSubDeviceKey: outputUID,
             kAudioAggregateDeviceIsPrivateKey: true,

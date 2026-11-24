@@ -9,5 +9,7 @@ let package = Package(
         .target(name: "Fff3Core", path: "Sources/Fff3Core"),
         .executableTarget(name: "Fff3", dependencies: ["Fff3Core"], path: "Sources/Fff3"),
         .executableTarget(name: "Fff3Bench", dependencies: ["Fff3Core"], path: "Sources/Fff3Bench"),
+        .testTarget(name: "Fff3CoreTests", dependencies: ["Fff3Core"]),
+        .testTarget(name: "Fff3Tests", dependencies: ["Fff3"]),
     ]
 )
