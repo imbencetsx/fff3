@@ -168,7 +168,16 @@ void fff3_now_playing(void *perl, void *cv) {
     Register registerForNotifications = (Register)dlsym(mr, "MRMediaRemoteRegisterForNowPlayingNotifications");
     requestClass = NSClassFromString(@"MRNowPlayingRequest");
     playerPathClass = NSClassFromString(@"MRPlayerPath");
-    if (!nowPlayingClients || !playerPathClass || !registerForNotifications || !requestClass || !NSClassFromString(@"MROrigin")) {
+    Class originClass = NSClassFromString(@"MROrigin");
+    // A missing method would throw on every check, so say so once instead.
+    if (!nowPlayingClients || !playerPathClass || !registerForNotifications || !requestClass || !originClass
+        || ![originClass respondsToSelector:@selector(localOrigin)]
+        || ![requestClass respondsToSelector:@selector(localNowPlayingPlayerPath)]
+        || ![playerPathClass instancesRespondToSelector:@selector(initWithOrigin:client:player:)]
+        || ![requestClass instancesRespondToSelector:@selector(initWithPlayerPath:)]
+        || ![requestClass instancesRespondToSelector:@selector(requestIsPlayingOnQueue:completion:)]
+        || ![requestClass instancesRespondToSelector:@selector(requestNowPlayingInfoOnQueue:completion:)]
+        || ![requestClass instancesRespondToSelector:@selector(requestNowPlayingItemArtworkOnQueue:completion:)]) {
         fprintf(stderr, "MediaRemote is not available\n");
         exit(2);
     }

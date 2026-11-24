@@ -93,6 +93,9 @@ final class NowPlayingSource: @unchecked Sendable {
     private let input = Pipe()
     private let lock = NSLock()
     private var stopped = false
+    // The end of the helper's stderr, read as it comes so a full pipe never blocks it.
+    private var errorTail = Data()
+    private static let maxErrorTail = 4096
     // One serial queue owns the reader and keeps the events in order.
     private let queue = DispatchQueue(label: "fff3.now-playing")
     private var reader = NowPlayingLineReader()
@@ -131,20 +134,42 @@ final class NowPlayingSource: @unchecked Sendable {
             guard let self else { return }
             self.queue.sync { for event in self.reader.append(data) { onEvent(event) } }
         }
+        errors.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { handle.readabilityHandler = nil; return }
+            self?.keepError(data)
+        }
         let queue = queue
         process.terminationHandler = { [weak self] process in
-            let detail = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            errors.fileHandleForReading.readabilityHandler = nil
+            let rest = (try? errors.fileHandleForReading.readToEnd()) ?? Data()
             guard let self else { return }
+            keepError(rest)
+            let detail = String(decoding: lock.withLock { errorTail }, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             queue.async {
                 guard !self.isStopped else { return }
                 onExit(detail.isEmpty ? "exit code \(process.terminationStatus)" : detail)
             }
         }
-        try process.run()
+        do {
+            try process.run()
+        } catch {
+            // Without a process the pipes never reach end of file, so drop their handlers here.
+            output.fileHandleForReading.readabilityHandler = nil
+            errors.fileHandleForReading.readabilityHandler = nil
+            throw error
+        }
     }
 
     private var isStopped: Bool { lock.withLock { stopped } }
+
+    private func keepError(_ data: Data) {
+        lock.withLock {
+            errorTail.append(data)
+            if errorTail.count > Self.maxErrorTail { errorTail = Data(errorTail.suffix(Self.maxErrorTail)) }
+        }
+    }
 
     func stop() {
         lock.withLock { stopped = true }

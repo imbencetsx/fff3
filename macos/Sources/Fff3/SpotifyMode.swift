@@ -244,6 +244,7 @@ final class SpotifyMode {
     }
 
     private static let missingHelper = "The Now Playing helper is missing from this build. Rebuild [rgb] with build.sh."
+    private static let unreadableCover = "Could not read this song's cover. Holding the last colour."
 
     private func launchNowPlaying(generation: UUID, onColor: @escaping @MainActor (Rgb) -> Void) {
         guard let helper = NowPlayingSource.helperURL else {
@@ -319,6 +320,8 @@ final class SpotifyMode {
     private func applyNowPlaying(onColor: @escaping @MainActor (Rgb) -> Void) {
         let (player, ignored) = NowPlayingFilter.pick(players, browsers: browsers)
         let note = ignored.map { " \($0)." } ?? ""
+        // A cover decoded later, or another player, ends the unreadable cover error.
+        if error == Self.unreadableCover { error = nil }
         guard let player else {
             track = nil
             message = (ignored.map { "\($0)." } ?? "Nothing is playing.") + " Holding the last colour."
@@ -334,7 +337,7 @@ final class SpotifyMode {
             return
         }
         if unreadable.contains(player.id) {
-            error = "Could not read this song's cover. Holding the last colour."
+            error = Self.unreadableCover
             return
         }
         // Until a new cover is sampled, the previous one stays on the strips.

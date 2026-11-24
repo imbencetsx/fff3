@@ -68,7 +68,7 @@ final class NowPlayingFilterTests: XCTestCase {
         XCTAssertEqual(NowPlayingFilter.pick([playing, shown], browsers: []).player?.id, "com.apple.Music")
     }
 
-    func testOnlyAVideoMeansNoPlayerAndAReason() {
+    func testOnlyABrowserMeansNoPlayerAndAReason() {
         let pick = NowPlayingFilter.pick([event(bundle: "org.mozilla.firefox", active: true)], browsers: [])
         XCTAssertNil(pick.player)
         XCTAssertEqual(pick.ignored, "Browsers don't change the lights")
