@@ -159,6 +159,10 @@ The theme is always dark. Accents come from `seed`; the app root passes the colo
 - Measure smoothness on release builds, not debug builds.
 
 
+## Mac menu bar
+
+`AppDelegate` owns the `AppModel`, so it outlives the window. Closing the window frees its views and switches to the `.accessory` activation policy; a `MenuBarExtra` with the `.menu` style stays. `applicationShouldTerminate` turns Cmd-Q into a close unless `quit()` was called from the menu or the system is logging out. `MenuBarIcon` keeps the `openWindow` action for `showWindow()`.
+
 ## Mac Spotify mode
 
 `SpotifyPage` uses `AppModel.spotify` (`SpotifyMode`) for connection and current-track state. `AppModel.startSpotify()` stops audio sync, snapshots the target IDs, and sends transient colours through the existing controller. `stopSpotify()` cancels polling and uses the existing music restoration path. Target changes and manual light commands stop Spotify first. Audio and Spotify never share the output concurrently.

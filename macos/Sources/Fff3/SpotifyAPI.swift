@@ -109,6 +109,10 @@ actor SpotifyAPI {
         ], clientID: clientID)
     }
 
+    func use(_ credentials: SpotifyCredentials) {
+        self.credentials = credentials
+    }
+
     func disconnect() throws {
         try SpotifyKeychain.delete()
         credentials = nil

@@ -66,6 +66,7 @@ swift build -c release --product Fff3Bench && FFF3_BENCH="a.f32=114" .build/rele
 - Dispatch closures that leave the main actor must be `@Sendable`, or Swift 6 traps at run time.
 - A process tap stamps audio about 35 ms after it was played, and gets no callbacks while nothing plays. See "How late the lights are" in the README before you change the music timing.
 - Start the app with `open -n --env … '[rgb].app'`, never the binary from a shell: that captures silence. Quit the previous copy first.
+- Cmd-Q and an AppleScript `quit` only hide the app in the menu bar. To quit a copy from a script, use `pkill -f '\[rgb\]\.app/Contents/MacOS/Fff3'`. The user's copy is in `/Applications` (`./build.sh install`).
 - The app cannot read Now Playing itself: MediaRemote answers only Apple-signed processes. `Helpers/NowPlaying.m` runs inside `/usr/bin/perl` instead; test it there, not from a Swift script.
 - `FFF3_PAGE`, `FFF3_STYLE`, `FFF3_AUTOSTART`, `FFF3_AUDIO_FILE`, `FFF3_BLE_LOG`, `FFF3_BEAT_LOG` and `FFF3_TIMING_LOG` make checks scriptable: see the README.
 

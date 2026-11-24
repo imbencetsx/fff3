@@ -25,6 +25,7 @@ final class SpotifyMode {
     var source: AlbumSource {
         didSet {
             UserDefaults.standard.set(source.rawValue, forKey: "spotify.source")
+            loadKeychainIfNeeded()
             error = nil
             message = idleMessage
         }
@@ -49,6 +50,7 @@ final class SpotifyMode {
     @ObservationIgnored private var pending: (clientID: String, verifier: String, state: String)?
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var sentColor: Rgb?
+    @ObservationIgnored private var keychainLoaded: Bool
     @ObservationIgnored private var nowPlaying: NowPlayingSource?
     @ObservationIgnored private var nowPlayingRetry: Task<Void, Never>?
     @ObservationIgnored private var nowPlayingFailures = 0
@@ -63,12 +65,25 @@ final class SpotifyMode {
     private static let fadeFrameSeconds = 0.075
 
     init() {
-        let credentials = SpotifyKeychain.load()
+        let source = UserDefaults.standard.string(forKey: "spotify.source").flatMap(AlbumSource.init(rawValue:)) ?? .spotify
+        // Reading Keychain can wait on a macOS prompt, so Now Playing never touches it.
+        let credentials = source == .spotify ? SpotifyKeychain.load() : nil
         clientID = credentials?.clientID ?? UserDefaults.standard.string(forKey: "spotify.clientID") ?? ""
         connected = credentials != nil
         api = SpotifyAPI(credentials: credentials)
-        source = UserDefaults.standard.string(forKey: "spotify.source").flatMap(AlbumSource.init(rawValue:)) ?? .spotify
+        keychainLoaded = source == .spotify
+        self.source = source
         message = idleMessage
+    }
+
+    /// Loads the saved Spotify sign-in the first time the Spotify source is used.
+    private func loadKeychainIfNeeded() {
+        guard source == .spotify, !keychainLoaded else { return }
+        keychainLoaded = true
+        guard let credentials = SpotifyKeychain.load() else { return }
+        clientID = credentials.clientID
+        connected = true
+        Task { await api.use(credentials) }
     }
 
     var canStart: Bool { source == .nowPlaying || (connected && !connecting) }

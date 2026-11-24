@@ -19,12 +19,18 @@ To build it yourself, use the Xcode command line tools, from the repo root:
 ```sh
 cd macos
 ./build.sh                      # -> [rgb].app, signed ad hoc
-rm -rf '/Applications/[rgb].app' && cp -R '[rgb].app' /Applications/
+./build.sh install              # also replaces /Applications/[rgb].app
 ```
 
 Always remove the old app before you copy a new one over it: a copy over the old bundle keeps a stale signature, and macOS refuses to start it. The app is signed ad hoc, so macOS may ask again for Bluetooth, system audio or microphone access after each new build.
 
+A new build also changes the app's signature, so macOS may ask whether [rgb] can read its saved Spotify sign-in from Keychain. The app waits for that answer, so a hidden prompt can look like a frozen app. It only reads Keychain when the Spotify account source is selected.
+
 Each strip accepts one Bluetooth connection at a time. While the Mac app runs it holds every strip it knows, so the phone cannot reach them. Quit the Mac app to give them back.
+
+### Menu bar
+
+Closing the window, or Cmd-Q, leaves [rgb] running as a lightbulb in the menu bar, with no Dock icon, so album colours and music sync keep going. The window's views are freed when it closes, so in the background [rgb] uses no CPU while idle and about 40 MB of memory. The menu shows how many strips are connected and the current song, starts or stops album colours, stops music sync and reopens the window; opening [rgb] again does too. **Quit [rgb]** in that menu really quits and frees the strips. Logging out or shutting down also quits.
 
 ## What it does
 

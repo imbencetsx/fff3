@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds [rgb].app from the Swift package, with its icon drawn from source.
+# Builds [rgb].app from the Swift package, with its icon drawn from source. `./build.sh install` also installs it.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -52,3 +52,10 @@ if ! codesign --force --sign - "$APP"; then
 fi
 
 echo "built $PWD/$APP"
+
+# ./build.sh install also copies it to /Applications, replacing the copy there.
+if [ "${1:-}" = "install" ]; then
+    rm -rf "/Applications/$APP"
+    ditto "$APP" "/Applications/$APP"
+    echo "installed /Applications/$APP"
+fi
