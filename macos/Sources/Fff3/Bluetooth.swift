@@ -1,5 +1,6 @@
 import CoreBluetooth
 import Foundation
+import os
 import Fff3Core
 
 enum ConnectionState: Equatable, Sendable {
@@ -66,6 +67,9 @@ final class LedController: NSObject, @unchecked Sendable {
             for device in devices where self.links[device.id] == nil {
                 self.links[device.id] = StripLink(id: device.id, family: device.family, controller: self)
             }
+            for device in devices {
+                self.links[device.id]?.colorCalibration = device.colorCalibration ?? ColorCalibration()
+            }
             if self.status == .ready { self.links.values.forEach { $0.start() } }
             self.publishStates()
         }
@@ -79,6 +83,10 @@ final class LedController: NSObject, @unchecked Sendable {
                 for command in commands { link.send(command) }
             }
         }
+    }
+
+    func previewColorCalibration(_ id: UUID, _ calibration: ColorCalibration) {
+        queue.async { self.links[id]?.colorCalibration = calibration }
     }
 
     func retryNow() {
@@ -165,11 +173,11 @@ extension LedController: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
-        links[peripheral.identifier]?.didDrop()
+        links[peripheral.identifier]?.didDrop(error: error)
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        links[peripheral.identifier]?.didDrop()
+        links[peripheral.identifier]?.didDrop(error: error)
     }
 }
 
@@ -178,6 +186,7 @@ extension LedController: CBCentralManagerDelegate {
 final class StripLink: NSObject, CBPeripheralDelegate, @unchecked Sendable {
     let id: UUID
     let family: LedFamily
+    var colorCalibration = ColorCalibration()
     private unowned let controller: LedController
     private(set) var state = ConnectionState.idle {
         didSet { if state != oldValue { controller.publishStates() } }
@@ -186,7 +195,10 @@ final class StripLink: NSObject, CBPeripheralDelegate, @unchecked Sendable {
     private var characteristic: CBCharacteristic?
     private var writeType = CBCharacteristicWriteType.withoutResponse
     private var failures = 0
-    private var attempt = 0
+    private var lifecycle = ConnectionLifecycle()
+    private var connectedAt: UInt64?
+    private var acknowledgement = WriteAcknowledgementToken()
+    private static let logger = Logger(subsystem: "com.kernoeb.fff3.mac", category: "Bluetooth")
     private var closed = false
     private var pendingAck: ((WriteOutcome) -> Void)?
     private var writeQueue: WriteQueue!
@@ -205,7 +217,7 @@ final class StripLink: NSObject, CBPeripheralDelegate, @unchecked Sendable {
     }
 
     func send(_ command: Command) {
-        let frames = family.encode(command)
+        let frames = family.encode(colorCalibration.apply(command))
         if frames.isEmpty { return }
         writeQueue.enqueue(command, frames: frames)
     }
@@ -213,17 +225,8 @@ final class StripLink: NSObject, CBPeripheralDelegate, @unchecked Sendable {
     var isIdle: Bool { writeQueue.isIdle }
 
     func start() {
-        guard !closed, peripheral == nil || state == .idle || isBluetoothState else { return }
+        guard !closed else { return }
         connect()
-    }
-
-    private var isConnecting: Bool {
-        if case .connecting = state { return true }
-        return false
-    }
-
-    private var isBluetoothState: Bool {
-        state == .bluetoothOff || state == .permissionMissing || state == .unsupported
     }
 
     func retryNow() {
@@ -231,7 +234,8 @@ final class StripLink: NSObject, CBPeripheralDelegate, @unchecked Sendable {
     }
 
     func bluetoothGone(_ status: BluetoothStatus) {
-        attempt += 1
+        lifecycle.suspend()
+        connectedAt = nil
         characteristic = nil
         failPendingAck()
         state = switch status {
@@ -243,7 +247,7 @@ final class StripLink: NSObject, CBPeripheralDelegate, @unchecked Sendable {
 
     func close() {
         closed = true
-        attempt += 1
+        lifecycle.close()
         writeQueue.clear()
         failPendingAck()
         if let peripheral { controller.centralManager.cancelPeripheralConnection(peripheral) }
@@ -253,51 +257,59 @@ final class StripLink: NSObject, CBPeripheralDelegate, @unchecked Sendable {
     }
 
     private func connect() {
-        guard !closed, controller.bluetoothStatus == .ready else { return }
+        guard !closed, controller.bluetoothStatus == .ready, let token = lifecycle.begin() else { return }
         guard let found = controller.peripheral(for: id) else {
-            // This Mac has never seen the strip: it must be added again from a scan.
-            // A new attempt cancels any retry already waiting, so start() cannot add a second one.
-            attempt += 1
+            _ = lifecycle.disconnected()
             failures += 1
             scheduleRetry()
             return
         }
-        attempt += 1
-        let token = attempt
         peripheral = found
         found.delegate = self
         state = .connecting(attempt: failures + 1)
+        Self.logger.info("Connecting strip \(self.id.uuidString.prefix(4), privacy: .public), attempt \(self.failures + 1)")
         controller.centralManager.connect(found)
         controller.queue.asyncAfter(deadline: .now() + BleTuning.connectTimeout + BleTuning.discoveryTimeout) { [weak self] in
-            guard let self, token == self.attempt, self.characteristic == nil, !self.closed else { return }
-            // Connect or discovery took too long: CoreBluetooth never gives up on its own.
-            if let peripheral = self.peripheral { self.controller.centralManager.cancelPeripheralConnection(peripheral) }
-            self.didDrop()
+            guard let self, self.characteristic == nil else { return }
+            self.cancelConnection(generation: token, reason: "Connection or discovery timed out")
         }
     }
 
     func didConnect() {
+        guard !closed, lifecycle.connected() else { return }
         peripheral?.discoverServices([CBUUID(string: family.proto.gatt.service)])
     }
 
-    func didDrop() {
-        // A connect timeout drops the link itself, then CoreBluetooth reports the cancel too: count it once.
-        // A disconnect after Bluetooth went off must keep that state.
-        guard !closed, state == .connected || isConnecting else { return }
-        let wasConnected = state == .connected
-        attempt += 1
+    func didDrop(error: Error? = nil) {
+        guard !closed, lifecycle.disconnected() else { return }
+        let connectedFor = connectedAt.map { Double(nowNanos() - $0) / 1e9 } ?? 0
+        if connectedFor >= 30 { failures = 0 }
+        failures += 1
+        connectedAt = nil
         characteristic = nil
         failPendingAck()
-        failures = wasConnected ? 0 : failures + 1
+        let code = (error as NSError?)?.code ?? 0
+        let domain = (error as NSError?)?.domain ?? "local cancellation"
+        Self.logger.notice("Strip \(self.id.uuidString.prefix(4), privacy: .public) disconnected after \(connectedFor) seconds: \(domain, privacy: .public) code \(code)")
         scheduleRetry()
+    }
+
+    private func cancelConnection(generation: Int, reason: String) {
+        guard !closed, let peripheral, lifecycle.cancel(generation: generation) else { return }
+        characteristic = nil
+        failPendingAck()
+        state = .connecting(attempt: failures + 1)
+        Self.logger.notice("Cancelling strip \(self.id.uuidString.prefix(4), privacy: .public): \(reason, privacy: .public)")
+        // CoreBluetooth cancellation is asynchronous. Retry only after its delegate callback.
+        controller.centralManager.cancelPeripheralConnection(peripheral)
     }
 
     private func scheduleRetry() {
         let wait = backoff(failures)
         state = .waitingToRetry(failures: failures, retryInMillis: wait)
-        let token = attempt
+        let token = lifecycle.generation
         controller.queue.asyncAfter(deadline: .now() + .milliseconds(wait)) { [weak self] in
-            guard let self, token == self.attempt, !self.closed else { return }
+            guard let self, token == self.lifecycle.generation, !self.closed else { return }
             self.connect()
         }
     }
@@ -309,34 +321,45 @@ final class StripLink: NSObject, CBPeripheralDelegate, @unchecked Sendable {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        guard lifecycle.phase == .discovering else { return }
         let gatt = family.proto.gatt
         guard let service = peripheral.services?.first(where: { $0.uuid == CBUUID(string: gatt.service) }) else {
-            controller.centralManager.cancelPeripheralConnection(peripheral)
+            cancelConnection(generation: lifecycle.generation, reason: "LED service discovery failed")
             return
         }
         peripheral.discoverCharacteristics([CBUUID(string: gatt.writeCharacteristic)], for: service)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        guard lifecycle.phase == .discovering else { return }
         let gatt = family.proto.gatt
         guard let found = service.characteristics?.first(where: { $0.uuid == CBUUID(string: gatt.writeCharacteristic) }) else {
             NSLog("fff3: %@ has no %@ in %@", id.uuidString, gatt.writeCharacteristic, gatt.service)
-            controller.centralManager.cancelPeripheralConnection(peripheral)
+            cancelConnection(generation: lifecycle.generation, reason: "LED characteristic discovery failed")
             return
         }
+        guard lifecycle.ready() else { return }
         let canSkipResponse = found.properties.contains(.writeWithoutResponse)
         writeType = gatt.writeWithoutResponse && canSkipResponse ? .withoutResponse : .withResponse
         characteristic = found
-        failures = 0
+        connectedAt = nowNanos()
         state = .connected
+        Self.logger.info("Strip \(self.id.uuidString.prefix(4), privacy: .public) ready")
+        peripheral.readRSSI()
         send(.clockSync(at: Date()))
         writeQueue.wake()
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        guard let token = acknowledgement.pending, acknowledgement.complete(token) else { return }
         let ack = pendingAck
         pendingAck = nil
         ack?(error == nil ? .sent : .failed)
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didReadRSSI RSSI: NSNumber, error: Error?) {
+        guard error == nil else { return }
+        Self.logger.info("Strip \(self.id.uuidString.prefix(4), privacy: .public) signal \(RSSI.intValue) dBm")
     }
 
     func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
@@ -359,15 +382,16 @@ final class StripLink: NSObject, CBPeripheralDelegate, @unchecked Sendable {
             done(.sent)
             return
         }
+        let acknowledgementToken = acknowledgement.begin()
         pendingAck = done
         peripheral.writeValue(data, for: characteristic, type: .withResponse)
         logFrame(frame)
-        let token = attempt
+        let token = lifecycle.generation
         controller.queue.asyncAfter(deadline: .now() + BleTuning.writeAckTimeout) { [weak self] in
-            // No acknowledgement in time: send the next frame anyway.
-            guard let self, token == self.attempt, let ack = self.pendingAck else { return }
-            self.pendingAck = nil
-            ack(.sent)
+            guard let self, token == self.lifecycle.generation,
+                  self.acknowledgement.pending == acknowledgementToken else { return }
+            // Reconnect rather than treating an unacknowledged command as delivered.
+            self.cancelConnection(generation: token, reason: "Bluetooth write acknowledgement timed out")
         }
     }
 
@@ -381,6 +405,7 @@ final class StripLink: NSObject, CBPeripheralDelegate, @unchecked Sendable {
     private static let logFrames = ProcessInfo.processInfo.environment["FFF3_BLE_LOG"] != nil
 
     private func failPendingAck() {
+        acknowledgement.clear()
         let ack = pendingAck
         pendingAck = nil
         ack?(.waiting)

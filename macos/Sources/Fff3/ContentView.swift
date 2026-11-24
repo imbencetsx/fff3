@@ -24,6 +24,8 @@ struct ContentView: View {
                     EmptyState(theme: theme, accent: accent, onAccent: theme.onAccent(model.accent)) { adding = true }
                 } else if model.page == .light {
                     LightPage(model: model, theme: theme, accent: accent)
+                } else if model.page == .spotify {
+                    SpotifyPage(model: model, theme: theme, accent: accent)
                 } else {
                     MusicPage(model: model, theme: theme, accent: accent)
                 }
@@ -198,7 +200,7 @@ private struct EmptyState: View {
         VStack(spacing: 14) {
             Spacer()
             Text("No strips yet").font(.system(size: 17, weight: .semibold))
-            Text("Add your ELK-BLEDOM or MELK strip once. fff3 then connects to it each time it opens.")
+            Text("Add your ELK-BLEDOM or MELK strip once. [rgb] then connects to it each time it opens.")
                 .font(.system(size: 13)).foregroundStyle(theme.dim)
                 .multilineTextAlignment(.center).frame(maxWidth: 340)
             QuietButton(title: "Add strip", systemImage: "plus", theme: theme, accent: accent, prominent: true, onAccent: onAccent, action: add)
@@ -224,7 +226,7 @@ private struct AddStripView: View {
             }
             let fresh = model.scanned.filter { strip in !model.devices.contains { $0.id == strip.id } }
             if fresh.isEmpty {
-                Text("A strip shows here when it is on and no other device is connected to it. Close the fff3 app on your phone first: each strip accepts one connection at a time.")
+                Text("A strip shows here when it is on and no other device is connected to it. Close the LED app on your phone first: each strip accepts one connection at a time.")
                     .font(.system(size: 12)).foregroundStyle(theme.dim).fixedSize(horizontal: false, vertical: true)
             }
             ScrollView {

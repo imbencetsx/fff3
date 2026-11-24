@@ -140,13 +140,14 @@ jobs:
         run: |
           swift --version
           ./tools/test.sh
+          swift test
           ./build.sh
 
       # ditto keeps the bundle's signature and attributes, which a plain zip loses.
       - name: Zip the app
         env:
           ZIP: ${{ steps.version.outputs.zip }}
-        run: ditto -c -k --keepParent macos/Fff3.app "$ZIP"
+        run: ditto -c -k --keepParent 'macos/[rgb].app' "$ZIP"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

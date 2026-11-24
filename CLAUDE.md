@@ -53,7 +53,7 @@ A native Mac version lives in `macos/` (SwiftUI, Swift 6, SwiftPM, no Xcode proj
 
 ```sh
 cd macos
-./build.sh                      # -> Fff3.app, signed ad hoc, bundle id com.kernoeb.fff3.mac
+./build.sh                      # -> [rgb].app, signed ad hoc, bundle id com.kernoeb.fff3.mac
 ./tools/test.sh                 # protocol frames with their exact hex
 swift build -c release --product Fff3Bench && FFF3_BENCH="a.f32=114" .build/release/Fff3Bench
 ```
@@ -62,10 +62,12 @@ swift build -c release --product Fff3Bench && FFF3_BENCH="a.f32=114" .build/rele
 - Use `JMath` for maths in the port, never Swift's Float functions: Kotlin computes `ln`, `exp`, `pow` and `log10` on Floats in Double, and rounds half up. Keep Kotlin's types: a Float times a Double is a Double.
 - While the Mac app runs it holds the strips' only connection. Quit it before you test on the phone.
 - The capture callback of a process tap starts with the output device's own input buffers when it has some (a USB audio interface). Read the tap's buffers, which come last.
-- `rm -rf` a signed `Fff3.app` before you replace it. Ad-hoc signing may make macOS ask for permissions again after a rebuild.
+- `rm -rf` a signed `[rgb].app` before you replace it. Ad-hoc signing may make macOS ask for permissions again after a rebuild.
 - Dispatch closures that leave the main actor must be `@Sendable`, or Swift 6 traps at run time.
 - A process tap stamps audio about 35 ms after it was played, and gets no callbacks while nothing plays. See "How late the lights are" in the README before you change the music timing.
-- Start the app with `open -n --env … Fff3.app`, never the binary from a shell: that captures silence. Quit the previous copy first.
+- Start the app with `open -n --env … '[rgb].app'`, never the binary from a shell: that captures silence. Quit the previous copy first.
+- Cmd-Q and an AppleScript `quit` only hide the app in the menu bar. To quit a copy from a script, use `pkill -f '\[rgb\]\.app/Contents/MacOS/Fff3'`. The user's copy is in `/Applications` (`./build.sh install`).
+- The app cannot read Now Playing itself: MediaRemote answers only Apple-signed processes. `Helpers/NowPlaying.m` runs inside `/usr/bin/perl` instead; test it there, not from a Swift script.
 - `FFF3_PAGE`, `FFF3_STYLE`, `FFF3_AUTOSTART`, `FFF3_AUDIO_FILE`, `FFF3_BLE_LOG`, `FFF3_BEAT_LOG` and `FFF3_TIMING_LOG` make checks scriptable: see the README.
 
 ## Code rules

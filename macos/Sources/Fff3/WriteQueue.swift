@@ -12,7 +12,7 @@ enum BleTuning {
     static let failedRetryNanos: UInt64 = 100_000_000
     static let maxFailedRetries = 3
     /// How long to wait for a write acknowledgement before sending the next frame anyway.
-    static let writeAckTimeout = 0.5
+    static let writeAckTimeout = 2.0
     static let connectTimeout = 10.0
     static let discoveryTimeout = 8.0
     static let reconnectFirstDelayMs = 1_000

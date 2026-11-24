@@ -8,6 +8,7 @@ struct LightPage: View {
     let accent: Color
     @State private var brightness = 100.0
     @State private var speed = 50.0
+    @State private var showingCalibration = false
 
     private var state: LedState { model.targetState }
 
@@ -42,6 +43,14 @@ struct LightPage: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                HStack {
+                    QuietButton(title: "Calibrate colours…", theme: theme, accent: accent) {
+                        showingCalibration = true
+                    }
+                    Text("Adjust and save the colour balance for each strip.")
+                        .font(.system(size: 11)).foregroundStyle(theme.dim)
+                }
+                SettingsTransferControls(model: model)
                 if let family = model.targetFamily {
                     EffectsList(model: model, family: family, theme: theme, accent: accent, speed: $speed)
                 } else if model.targetDevices.count > 1 {
@@ -50,6 +59,9 @@ struct LightPage: View {
                 }
             }
             .padding(20)
+        }
+        .sheet(isPresented: $showingCalibration) {
+            ColorCalibrationSheet(model: model)
         }
         .scrollContentBackground(.hidden)
         .onAppear(perform: syncFromState)

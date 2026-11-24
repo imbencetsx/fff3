@@ -1,2 +1,4 @@
 .build/
+# Built by build.sh; the old name stays ignored for copies made before the rename.
+[[]rgb[]].app/
 Fff3.app/
